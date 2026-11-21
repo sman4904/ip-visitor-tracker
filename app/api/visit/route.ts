@@ -2,35 +2,42 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SECRET_KEY!
-);
-
 export async function POST(request: NextRequest) {
   try {
-    // 1. Check consent
+    // 1. Check user consent
     const body = await request.json();
 
     if (body.consent !== true) {
       return NextResponse.json(
-        { success: false, message: "User consent is required." },
+        {
+          success: false,
+          message: "User consent is required.",
+        },
         { status: 403 }
       );
     }
 
     // 2. Check environment variables
-    if (
-      !process.env.SUPABASE_URL ||
-      !process.env.SUPABASE_SECRET_KEY
-    ) {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseSecret = process.env.SUPABASE_SECRET_KEY;
+
+    if (!supabaseUrl || !supabaseSecret) {
       return NextResponse.json(
-        { success: false, message: "Supabase configuration missing." },
+        {
+          success: false,
+          message: "Supabase environment variables are missing.",
+        },
         { status: 500 }
       );
     }
 
-    // 3. Get visitor IP
+    // 3. Connect to Supabase
+    const supabase = createClient(
+      supabaseUrl,
+      supabaseSecret
+    );
+
+    // 4. Get visitor IP
     const forwardedFor = request.headers.get("x-forwarded-for");
 
     const ip =
@@ -38,10 +45,10 @@ export async function POST(request: NextRequest) {
       forwardedFor?.split(",")[0]?.trim() ||
       null;
 
-    // 4. Get User Agent
+    // 5. Get user agent
     const userAgent = request.headers.get("user-agent") || "";
 
-    // 5. Detect browser
+    // 6. Detect browser
     let browser = "Unknown";
 
     if (/Edg/i.test(userAgent)) {
@@ -54,7 +61,7 @@ export async function POST(request: NextRequest) {
       browser = "Safari";
     }
 
-    // 6. Detect operating system
+    // 7. Detect operating system
     let operatingSystem = "Unknown";
 
     if (/Windows/i.test(userAgent)) {
@@ -63,13 +70,13 @@ export async function POST(request: NextRequest) {
       operatingSystem = "Android";
     } else if (/iPhone|iPad|iPod/i.test(userAgent)) {
       operatingSystem = "iOS";
-    } else if (/Mac OS X|Macintosh/i.test(userAgent)) {
+    } else if (/Macintosh|Mac OS X/i.test(userAgent)) {
       operatingSystem = "macOS";
     } else if (/Linux/i.test(userAgent)) {
       operatingSystem = "Linux";
     }
 
-    // 7. Get Vercel geolocation headers as fallback
+    // 8. Get Vercel geolocation headers
     const vercelLocation = {
       city: request.headers.get("x-vercel-ip-city"),
       region: request.headers.get("x-vercel-ip-country-region"),
@@ -80,7 +87,7 @@ export async function POST(request: NextRequest) {
       longitude: request.headers.get("x-vercel-ip-longitude"),
     };
 
-    // 8. Initialize location information
+    // 9. Initialize location
     let location = {
       city: null as string | null,
       region: null as string | null,
@@ -94,23 +101,40 @@ export async function POST(request: NextRequest) {
       asn: null as string | null,
     };
 
+    // 10. Diagnostic information
     let geolocationStatus = "unavailable";
+    let geolocationError: string | null = null;
+    let ipapiHttpStatus: number | null = null;
 
-    // 9. Get accurate available IP information
+    // 11. Look up visitor IP using ipapi
     if (ip) {
       try {
         const response = await fetch(
           `https://ipapi.co/${encodeURIComponent(ip)}/json/`,
           {
             cache: "no-store",
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(15000),
           }
         );
 
-        if (response.ok) {
-          const data = await response.json();
+        ipapiHttpStatus = response.status;
 
-          if (!data.error) {
+        const rawResponse = await response.text();
+
+        console.log("VISITOR IP:", ip);
+        console.log("IPAPI HTTP STATUS:", response.status);
+        console.log("IPAPI RESPONSE:", rawResponse);
+
+        if (!response.ok) {
+          geolocationError =
+            `HTTP ${response.status}: ${rawResponse.slice(0, 500)}`;
+        } else {
+          const data = JSON.parse(rawResponse);
+
+          if (data.error) {
+            geolocationError =
+              data.reason || "IPAPI returned an error.";
+          } else {
             location = {
               city: data.city || null,
               region: data.region || null,
@@ -118,14 +142,17 @@ export async function POST(request: NextRequest) {
               country_code: data.country_code || null,
               postal: data.postal || null,
               timezone: data.timezone || null,
+
               latitude:
                 typeof data.latitude === "number"
                   ? data.latitude
                   : null,
+
               longitude:
                 typeof data.longitude === "number"
                   ? data.longitude
                   : null,
+
               isp: data.org || null,
               asn: data.asn || null,
             };
@@ -134,12 +161,26 @@ export async function POST(request: NextRequest) {
           }
         }
       } catch (error) {
-        console.error("IP geolocation error:", error);
+        geolocationError =
+          error instanceof Error
+            ? error.message
+            : String(error);
+
+        console.error("IPAPI LOOKUP FAILED:", geolocationError);
+      }
+    } else {
+      geolocationError = "Visitor IP address could not be detected.";
+    }
+
+    // 12. Use Vercel headers only for missing information
+    if (!location.city && vercelLocation.city) {
+      try {
+        location.city = decodeURIComponent(vercelLocation.city);
+      } catch {
+        location.city = vercelLocation.city;
       }
     }
 
-    // 10. Use Vercel headers only for missing values
-    location.city ||= vercelLocation.city;
     location.region ||= vercelLocation.region;
     location.country_code ||= vercelLocation.country_code;
     location.postal ||= vercelLocation.postal;
@@ -167,12 +208,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 11. Set country name if missing
+    // 13. Country name fallback
     if (!location.country && location.country_code === "IN") {
       location.country = "India";
     }
 
-    // 12. Save visitor information to Supabase
+    // 14. Save visitor information to Supabase
     const { data, error } = await supabase
       .from("visitors")
       .insert([
@@ -196,33 +237,48 @@ export async function POST(request: NextRequest) {
       .select();
 
     if (error) {
-      console.error("Supabase insert error:", error);
+      console.error("SUPABASE INSERT ERROR:", error);
 
       return NextResponse.json(
         {
           success: false,
           message: "Failed to save visitor information.",
           error: error.message,
+          geolocation_status: geolocationStatus,
+          geolocation_error: geolocationError,
+          ipapi_http_status: ipapiHttpStatus,
         },
         { status: 500 }
       );
     }
 
-    // 13. Return successful response
+    // 15. Return result and debugging information
     return NextResponse.json({
       success: true,
       message: "Visitor information saved successfully.",
+
+      ip_address: ip,
+
       geolocation_status: geolocationStatus,
+      geolocation_error: geolocationError,
+      ipapi_http_status: ipapiHttpStatus,
+
       location: location,
+
       data: data,
     });
+
   } catch (error) {
-    console.error("Visitor API error:", error);
+    console.error("VISITOR API ERROR:", error);
 
     return NextResponse.json(
       {
         success: false,
         message: "Internal server error.",
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
       },
       { status: 500 }
     );
