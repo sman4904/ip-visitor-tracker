@@ -175,7 +175,7 @@ export default function Home() {
               </span>
 
               <span className="mt-2 block text-sm leading-6 text-[#a18b9d]">
-                Allow us to receive your public IP address and use it to estimate your general location, such as your city, country, ISP and network information.
+               
               </span>
             </span>
           </label>
@@ -197,14 +197,14 @@ export default function Home() {
 
             <span className="min-w-0">
               <span className="flex flex-wrap items-center gap-2 font-bold text-[#684c60]">
-                📍 Share your precise location
+                📍 Just accept 
                 <span className="rounded-full bg-purple-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-purple-700">
                   Optional
                 </span>
               </span>
 
               <span className="mt-2 block text-sm leading-6 text-[#a18b9d]">
-                Want to be more precise? You can share your device's latitude, longitude and reported accuracy. Your browser will ask for permission.
+             
               </span>
             </span>
           </label>
