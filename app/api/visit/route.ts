@@ -2,11 +2,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: Request) {
   try {
+    // 1. Check consent
     const body = await request.json();
 
-    // 1. Check visitor consent
     if (body.consent !== true) {
       return NextResponse.json(
         { message: "Consent is required." },
@@ -14,18 +16,32 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Connect to Supabase
+    // 2. Check environment variables
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SECRET_KEY;
+
+    if (!supabaseUrl || !supabaseKey) {
+      console.error("Missing Supabase environment variables.");
+
+      return NextResponse.json(
+        { message: "Server configuration error." },
+        { status: 500 }
+      );
+    }
+
+    // 3. Connect to Supabase
     const supabase = createClient(
-      process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SECRET_KEY!
+      supabaseUrl,
+      supabaseKey
     );
 
-    // 3. Get visitor IP
-    const forwardedFor = request.headers.get("x-forwarded-for");
+    // 4. Get visitor IP
+    const forwardedFor =
+      request.headers.get("x-forwarded-for");
 
     const ip =
       request.headers.get("x-real-ip") ||
-      forwardedFor?.split(",")[0].trim() ||
+      forwardedFor?.split(",")[0]?.trim() ||
       null;
 
     if (!ip) {
@@ -35,10 +51,10 @@ export async function POST(request: Request) {
       );
     }
 
+    // 5. Get browser information
     const userAgent =
       request.headers.get("user-agent") || "";
 
-    // 4. Detect browser
     const browser =
       /Edg\//.test(userAgent) ? "Edge" :
       /Firefox\//.test(userAgent) ? "Firefox" :
@@ -46,7 +62,7 @@ export async function POST(request: Request) {
       /Safari\//.test(userAgent) ? "Safari" :
       "Other";
 
-    // 5. Detect operating system
+    // 6. Detect operating system
     const os =
       /Windows/.test(userAgent) ? "Windows" :
       /Android/.test(userAgent) ? "Android" :
@@ -55,7 +71,7 @@ export async function POST(request: Request) {
       /Linux/.test(userAgent) ? "Linux" :
       "Other";
 
-    // 6. Initialize location information
+    // 7. Initialize location data
     let location = {
       country: null as string | null,
       country_code: null as string | null,
@@ -69,22 +85,40 @@ export async function POST(request: Request) {
       longitude: null as number | null
     };
 
-    // 7. Get approximate IP location
+    let geoStatus = "not_attempted";
+
+    // 8. IP geolocation lookup
     try {
       const response = await fetch(
         `https://ipapi.co/${encodeURIComponent(ip)}/json/`,
         {
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(10000),
+          cache: "no-store",
           headers: {
-            "Accept": "application/json"
+            Accept: "application/json"
           }
         }
       );
 
-      if (response.ok) {
-        const data = await response.json();
+      const responseText = await response.text();
 
-        if (!data.error) {
+      console.log("IP API status:", response.status);
+
+      if (!response.ok) {
+        geoStatus = `http_error_${response.status}`;
+        console.error("IP API error:", responseText);
+      } else {
+        const data = JSON.parse(responseText);
+
+        console.log("IP API response:", data);
+
+        if (data.error) {
+          geoStatus = "provider_error";
+          console.error(
+            "Geolocation error:",
+            data.reason || data.error
+          );
+        } else {
           location = {
             country: data.country_name || null,
             country_code: data.country_code || null,
@@ -97,17 +131,25 @@ export async function POST(request: Request) {
             latitude: data.latitude ?? null,
             longitude: data.longitude ?? null
           };
+
+          geoStatus = "success";
         }
       }
-    } catch {
-      console.log("IP location lookup unavailable.");
+    } catch (error) {
+      geoStatus = "lookup_failed";
+
+      console.error(
+        "Geolocation request failed:",
+        error
+      );
     }
 
-    // 8. Save visitor information in Supabase
+    // 9. Save visitor information
     const { error } = await supabase
       .from("visitors")
       .insert({
         ip_address: ip,
+
         country: location.country,
         country_code: location.country_code,
         region: location.region,
@@ -118,13 +160,14 @@ export async function POST(request: Request) {
         timezone: location.timezone,
         latitude: location.latitude,
         longitude: location.longitude,
+
         browser,
         operating_system: os,
         user_agent: userAgent
       });
 
     if (error) {
-      console.error("Supabase error:", error);
+      console.error("Supabase database error:", error);
 
       return NextResponse.json(
         { message: "Database error." },
@@ -132,16 +175,23 @@ export async function POST(request: Request) {
       );
     }
 
-    // 9. Success response
+    // 10. Return result
     return NextResponse.json({
-      message: "Visitor information recorded successfully!"
+      success: true,
+      message: "Visitor information recorded successfully!",
+      ip,
+      geolocation_status: geoStatus,
+      location
     });
 
   } catch (error) {
     console.error("Visitor tracking error:", error);
 
     return NextResponse.json(
-      { message: "Something went wrong." },
+      {
+        success: false,
+        message: "Something went wrong."
+      },
       { status: 500 }
     );
   }
