@@ -102,8 +102,7 @@ export default function Home() {
         </div>
 
         <p className="text-center text-xs text-gray-600 mt-7">
-          Your privacy matters. Information is used for
-          disclosed website analytics.
+          
         </p>
 
       </div>
