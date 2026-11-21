@@ -84,7 +84,7 @@ export default function Home() {
         setMessage(
           `Yay! Your device location was recorded! 💗 Accuracy: approximately ${Math.round(
             result.device_location.accuracy_meters
-          )} metres.`
+          )} metres. You are cooked lil bro`
         );
       } else if (gpsConsent) {
         setMessage(
@@ -143,8 +143,7 @@ export default function Home() {
           </h1>
 
           <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-[#a18b9d]">
-            Before we begin, let's get to know your visit!
-            You are in control of what you share. 💗
+            Before we begin, let's get to know your visit! 💗
           </p>
         </div>
 
