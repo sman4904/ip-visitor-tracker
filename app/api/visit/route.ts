@@ -2,11 +2,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-export const dynamic = "force-dynamic";
-
 export async function POST(request: Request) {
   try {
-    // 1. Check consent
+    // 1. Check visitor consent
     const body = await request.json();
 
     if (body.consent !== true) {
@@ -87,7 +85,7 @@ export async function POST(request: Request) {
 
     let geoStatus = "not_attempted";
 
-    // 8. IP geolocation lookup
+    // 8. Get approximate IP location
     try {
       const response = await fetch(
         `https://ipapi.co/${encodeURIComponent(ip)}/json/`,
@@ -106,7 +104,11 @@ export async function POST(request: Request) {
 
       if (!response.ok) {
         geoStatus = `http_error_${response.status}`;
-        console.error("IP API error:", responseText);
+
+        console.error(
+          "IP API error:",
+          responseText
+        );
       } else {
         const data = JSON.parse(responseText);
 
@@ -114,6 +116,7 @@ export async function POST(request: Request) {
 
         if (data.error) {
           geoStatus = "provider_error";
+
           console.error(
             "Geolocation error:",
             data.reason || data.error
@@ -149,7 +152,6 @@ export async function POST(request: Request) {
       .from("visitors")
       .insert({
         ip_address: ip,
-
         country: location.country,
         country_code: location.country_code,
         region: location.region,
@@ -160,14 +162,16 @@ export async function POST(request: Request) {
         timezone: location.timezone,
         latitude: location.latitude,
         longitude: location.longitude,
-
         browser,
         operating_system: os,
         user_agent: userAgent
       });
 
     if (error) {
-      console.error("Supabase database error:", error);
+      console.error(
+        "Supabase database error:",
+        error
+      );
 
       return NextResponse.json(
         { message: "Database error." },
@@ -175,7 +179,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 10. Return result
+    // 10. Return success response
     return NextResponse.json({
       success: true,
       message: "Visitor information recorded successfully!",
@@ -185,7 +189,10 @@ export async function POST(request: Request) {
     });
 
   } catch (error) {
-    console.error("Visitor tracking error:", error);
+    console.error(
+      "Visitor tracking error:",
+      error
+    );
 
     return NextResponse.json(
       {
