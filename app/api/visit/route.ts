@@ -69,23 +69,56 @@ export async function POST(request: Request) {
       /Linux/.test(userAgent) ? "Linux" :
       "Other";
 
-    // 7. Initialize location data
+    // 7. Read Vercel geolocation headers
+    const vercelCity =
+      request.headers.get("x-vercel-ip-city");
+
+    const vercelCountry =
+      request.headers.get("x-vercel-ip-country");
+
+    const vercelRegion =
+      request.headers.get("x-vercel-ip-country-region");
+
+    const vercelLatitude =
+      request.headers.get("x-vercel-ip-latitude");
+
+    const vercelLongitude =
+      request.headers.get("x-vercel-ip-longitude");
+
+    const vercelTimezone =
+      request.headers.get("x-vercel-ip-timezone");
+
+    const vercelPostal =
+      request.headers.get("x-vercel-ip-postal-code");
+
+    // 8. Initialize location
     let location = {
       country: null as string | null,
-      country_code: null as string | null,
-      region: null as string | null,
+      country_code: vercelCountry,
+      region: vercelRegion,
       city: null as string | null,
       isp: null as string | null,
       asn: null as string | null,
-      postal: null as string | null,
-      timezone: null as string | null,
-      latitude: null as number | null,
-      longitude: null as number | null
+      postal: vercelPostal,
+      timezone: vercelTimezone,
+      latitude: vercelLatitude
+        ? Number(vercelLatitude) : null,
+      longitude: vercelLongitude
+        ? Number(vercelLongitude) : null
     };
 
-    let geoStatus = "not_attempted";
+    // Decode Vercel city header
+    try {
+      location.city = vercelCity
+        ? decodeURIComponent(vercelCity)
+        : null;
+    } catch {
+      location.city = vercelCity;
+    }
 
-    // 8. Get approximate IP location
+    let geoStatus = "vercel_headers";
+
+    // 9. IP lookup for additional information
     try {
       const response = await fetch(
         `https://ipapi.co/${encodeURIComponent(ip)}/json/`,
@@ -102,52 +135,61 @@ export async function POST(request: Request) {
 
       console.log("IP API status:", response.status);
 
-      if (!response.ok) {
-        geoStatus = `http_error_${response.status}`;
-
-        console.error(
-          "IP API error:",
-          responseText
-        );
-      } else {
+      if (response.ok) {
         const data = JSON.parse(responseText);
 
         console.log("IP API response:", data);
 
-        if (data.error) {
-          geoStatus = "provider_error";
-
-          console.error(
-            "Geolocation error:",
-            data.reason || data.error
-          );
-        } else {
+        if (!data.error) {
           location = {
             country: data.country_name || null,
-            country_code: data.country_code || null,
-            region: data.region || null,
-            city: data.city || null,
+            country_code:
+              location.country_code ||
+              data.country_code || null,
+            region:
+              location.region ||
+              data.region || null,
+            city:
+              location.city ||
+              data.city || null,
             isp: data.org || null,
             asn: data.asn || null,
-            postal: data.postal || null,
-            timezone: data.timezone || null,
-            latitude: data.latitude ?? null,
-            longitude: data.longitude ?? null
+            postal:
+              location.postal ||
+              data.postal || null,
+            timezone:
+              location.timezone ||
+              data.timezone || null,
+            latitude:
+              location.latitude ??
+              data.latitude ?? null,
+            longitude:
+              location.longitude ??
+              data.longitude ?? null
           };
 
           geoStatus = "success";
+        } else {
+          console.error(
+            "IP lookup error:",
+            data.reason || data.error
+          );
         }
+      } else {
+        console.error(
+          "IP API HTTP error:",
+          response.status,
+          responseText
+        );
       }
     } catch (error) {
-      geoStatus = "lookup_failed";
-
       console.error(
-        "Geolocation request failed:",
+        "IP lookup failed:",
         error
       );
     }
 
-    // 9. Save visitor information
+    // 10. Save visitor information
     const { error } = await supabase
       .from("visitors")
       .insert({
@@ -179,7 +221,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 10. Return success response
+    // 11. Return result
     return NextResponse.json({
       success: true,
       message: "Visitor information recorded successfully!",
