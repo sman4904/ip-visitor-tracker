@@ -138,8 +138,8 @@ export default function Home() {
           </p>
 
           <h1 className="mt-3 text-3xl sm:text-4xl font-extrabold tracking-tight text-[#61465b]">
-            Where are you
-            <span className="text-pink-400"> from?</span>
+            It is just a interective test
+            <span className="text-pink-400"> website </span>
           </h1>
 
           <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-[#a18b9d]">
@@ -239,9 +239,9 @@ export default function Home() {
         {/* Privacy Footer */}
         <div className="mt-7 border-t border-pink-100 pt-5 text-center">
           <p className="text-xs leading-6 text-[#b49eae]">
-            🔒 Your choice matters.
+           
             <br />
-            Precise device location is requested only with your separate consent and browser permission.
+            
           </p>
           <p className="mt-3 text-xs font-semibold text-pink-300">
             Made with ♡ and a little bit of magic
