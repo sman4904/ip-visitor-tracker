@@ -2,6 +2,44 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+type BrowserMetadata = {
+  device_type?: string;
+  device_vendor?: string | null;
+  device_model?: string | null;
+  os_version?: string | null;
+  browser_version?: string | null;
+
+  screen_width?: number;
+  screen_height?: number;
+  viewport_width?: number;
+  viewport_height?: number;
+  pixel_ratio?: number;
+  color_depth?: number;
+
+  language?: string;
+  languages?: string[];
+  timezone?: string;
+  cookies_enabled?: boolean;
+  touch_support?: boolean;
+
+  connection_type?: string | null;
+  effective_type?: string | null;
+  downlink_mbps?: number | null;
+  rtt_ms?: number | null;
+};
+
+function validNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : null;
+}
+
+function validText(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0
+    ? value.slice(0, 200)
+    : null;
+}
+
 export async function POST(request: NextRequest) {
   try {
     // 1. Read request body
@@ -39,19 +77,43 @@ export async function POST(request: NextRequest) {
     const userAgent = request.headers.get("user-agent") || "";
 
     let browser = "Unknown";
+    let browserVersion: string | null = null;
+
+    const browserMatch =
+      userAgent.match(/Edg\/([\d.]+)/i) ||
+      userAgent.match(/OPR\/([\d.]+)/i) ||
+      userAgent.match(/Firefox\/([\d.]+)/i) ||
+      userAgent.match(/Chrome\/([\d.]+)/i) ||
+      userAgent.match(/Version\/([\d.]+).*Safari/i);
 
     if (/Edg/i.test(userAgent)) browser = "Edge";
+    else if (/OPR/i.test(userAgent)) browser = "Opera";
     else if (/Firefox/i.test(userAgent)) browser = "Firefox";
     else if (/Chrome/i.test(userAgent)) browser = "Chrome";
     else if (/Safari/i.test(userAgent)) browser = "Safari";
 
+    browserVersion = browserMatch?.[1] || null;
+
     let operatingSystem = "Unknown";
+    let osVersion: string | null = null;
+
+    const androidMatch = userAgent.match(/Android\s([\d.]+)/i);
+    const iosMatch = userAgent.match(/OS\s([\d_]+)/i);
+    const windowsMatch = userAgent.match(/Windows NT\s([\d.]+)/i);
+    const macMatch = userAgent.match(/Mac OS X\s([\d_]+)/i);
 
     if (/Windows/i.test(userAgent)) operatingSystem = "Windows";
     else if (/Android/i.test(userAgent)) operatingSystem = "Android";
     else if (/iPhone|iPad|iPod/i.test(userAgent)) operatingSystem = "iOS";
     else if (/Macintosh|Mac OS X/i.test(userAgent)) operatingSystem = "macOS";
     else if (/Linux/i.test(userAgent)) operatingSystem = "Linux";
+
+    osVersion =
+      androidMatch?.[1] ||
+      iosMatch?.[1]?.replace(/_/g, ".") ||
+      windowsMatch?.[1] ||
+      macMatch?.[1]?.replace(/_/g, ".") ||
+      null;
 
     // 5. Validate optional device location
     const deviceConsent = body.preciseLocationConsent === true;
@@ -62,21 +124,18 @@ export async function POST(request: NextRequest) {
     let deviceAccuracy: number | null = null;
 
     if (deviceConsent && submittedLocation) {
-      const lat = submittedLocation.latitude;
-      const lon = submittedLocation.longitude;
-      const accuracy = submittedLocation.accuracy;
+      const lat = validNumber(submittedLocation.latitude);
+      const lon = validNumber(submittedLocation.longitude);
+      const accuracy = validNumber(submittedLocation.accuracy);
 
       if (
-        typeof lat === "number" &&
-        Number.isFinite(lat) &&
+        lat !== null &&
         lat >= -90 &&
         lat <= 90 &&
-        typeof lon === "number" &&
-        Number.isFinite(lon) &&
+        lon !== null &&
         lon >= -180 &&
         lon <= 180 &&
-        typeof accuracy === "number" &&
-        Number.isFinite(accuracy) &&
+        accuracy !== null &&
         accuracy >= 0
       ) {
         deviceLatitude = lat;
@@ -85,7 +144,58 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 6. Initialize IP location
+    // 6. Validate browser metadata
+    const metadata = (
+      body.browserMetadata &&
+      typeof body.browserMetadata === "object"
+        ? body.browserMetadata
+        : {}
+    ) as BrowserMetadata;
+
+    const deviceType = validText(metadata.device_type);
+    const deviceVendor = validText(metadata.device_vendor);
+    const deviceModel = validText(metadata.device_model);
+
+    const finalOsVersion =
+      validText(metadata.os_version) || osVersion;
+
+    const finalBrowserVersion =
+      validText(metadata.browser_version) || browserVersion;
+
+    const screenWidth = validNumber(metadata.screen_width);
+    const screenHeight = validNumber(metadata.screen_height);
+    const viewportWidth = validNumber(metadata.viewport_width);
+    const viewportHeight = validNumber(metadata.viewport_height);
+    const pixelRatio = validNumber(metadata.pixel_ratio);
+    const colorDepth = validNumber(metadata.color_depth);
+
+    const language = validText(metadata.language);
+
+    const languages = Array.isArray(metadata.languages)
+      ? metadata.languages
+          .filter((item): item is string => typeof item === "string")
+          .slice(0, 20)
+      : [];
+
+    const browserTimezone = validText(metadata.timezone);
+
+    const cookiesEnabled =
+      typeof metadata.cookies_enabled === "boolean"
+        ? metadata.cookies_enabled
+        : null;
+
+    const touchSupport =
+      typeof metadata.touch_support === "boolean"
+        ? metadata.touch_support
+        : null;
+
+    const connectionType = validText(metadata.connection_type);
+    const effectiveType = validText(metadata.effective_type);
+
+    const downlinkMbps = validNumber(metadata.downlink_mbps);
+    const rttMs = validNumber(metadata.rtt_ms);
+
+    // 7. Initialize IP location
     let location = {
       city: null as string | null,
       region: null as string | null,
@@ -103,7 +213,7 @@ export async function POST(request: NextRequest) {
     let geolocationError: string | null = null;
     let geolocationHttpStatus: number | null = null;
 
-    // 7. Look up IP using ipwho.is
+    // 8. Look up IP using ipwho.is
     if (ip) {
       try {
         const response = await fetch(
@@ -158,7 +268,7 @@ export async function POST(request: NextRequest) {
       geolocationError = "Visitor IP could not be detected.";
     }
 
-    // 8. Vercel headers as fallback for missing IP location fields
+    // 9. Vercel headers as fallback
     const vercelCity = request.headers.get("x-vercel-ip-city");
 
     if (!location.city && vercelCity) {
@@ -186,27 +296,30 @@ export async function POST(request: NextRequest) {
     }
 
     if (location.latitude === null) {
-      const value = Number(request.headers.get("x-vercel-ip-latitude"));
-      if (Number.isFinite(value) && request.headers.get("x-vercel-ip-latitude")) {
+      const rawLatitude = request.headers.get("x-vercel-ip-latitude");
+      const value = rawLatitude ? Number(rawLatitude) : null;
+
+      if (value !== null && Number.isFinite(value)) {
         location.latitude = value;
       }
     }
 
     if (location.longitude === null) {
-      const value = Number(request.headers.get("x-vercel-ip-longitude"));
-      if (Number.isFinite(value) && request.headers.get("x-vercel-ip-longitude")) {
+      const rawLongitude = request.headers.get("x-vercel-ip-longitude");
+      const value = rawLongitude ? Number(rawLongitude) : null;
+
+      if (value !== null && Number.isFinite(value)) {
         location.longitude = value;
       }
     }
 
-    // 9. Determine location source
-    let locationSource = "ip";
+    // 10. Determine location source
+    const locationSource =
+      deviceLatitude !== null && deviceLongitude !== null
+        ? "ip+device"
+        : "ip";
 
-    if (deviceLatitude !== null && deviceLongitude !== null) {
-      locationSource = "ip+device";
-    }
-
-    // 10. Save visitor information
+    // 11. Save visitor information
     const { data, error } = await supabase
       .from("visitors")
       .insert([
@@ -231,10 +344,38 @@ export async function POST(request: NextRequest) {
           device_accuracy_meters: deviceAccuracy,
           location_source: locationSource,
 
-          // Browser information
+          // Browser and OS
           browser,
+          browser_version: finalBrowserVersion,
           operating_system: operatingSystem,
+          os_version: finalOsVersion,
           user_agent: userAgent,
+
+          // Device information
+          device_type: deviceType,
+          device_vendor: deviceVendor,
+          device_model: deviceModel,
+
+          // Screen information
+          screen_width: screenWidth,
+          screen_height: screenHeight,
+          viewport_width: viewportWidth,
+          viewport_height: viewportHeight,
+          pixel_ratio: pixelRatio,
+          color_depth: colorDepth,
+
+          // Browser preferences
+          language,
+          languages,
+          browser_timezone: browserTimezone,
+          cookies_enabled: cookiesEnabled,
+          touch_support: touchSupport,
+
+          // Network conditions
+          connection_type: connectionType,
+          effective_type: effectiveType,
+          downlink_mbps: downlinkMbps,
+          rtt_ms: rttMs,
         },
       ])
       .select();
@@ -252,7 +393,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 11. Return result
+    // 12. Return result
     return NextResponse.json({
       success: true,
       message: "Visitor information saved successfully.",
@@ -261,7 +402,9 @@ export async function POST(request: NextRequest) {
       geolocation_error: geolocationError,
       geolocation_http_status: geolocationHttpStatus,
       location_source: locationSource,
+
       ip_location: location,
+
       device_location: {
         latitude: deviceLatitude,
         longitude: deviceLongitude,
@@ -273,6 +416,41 @@ export async function POST(request: NextRequest) {
               ? "unavailable_or_denied"
               : "not_requested",
       },
+
+      device_information: {
+        device_type: deviceType,
+        device_vendor: deviceVendor,
+        device_model: deviceModel,
+        operating_system: operatingSystem,
+        os_version: finalOsVersion,
+        browser,
+        browser_version: finalBrowserVersion,
+      },
+
+      screen_information: {
+        screen_width: screenWidth,
+        screen_height: screenHeight,
+        viewport_width: viewportWidth,
+        viewport_height: viewportHeight,
+        pixel_ratio: pixelRatio,
+        color_depth: colorDepth,
+      },
+
+      browser_preferences: {
+        language,
+        languages,
+        timezone: browserTimezone,
+        cookies_enabled: cookiesEnabled,
+        touch_support: touchSupport,
+      },
+
+      network_conditions: {
+        connection_type: connectionType,
+        effective_type: effectiveType,
+        downlink_mbps: downlinkMbps,
+        rtt_ms: rttMs,
+      },
+
       data,
     });
   } catch (error) {
